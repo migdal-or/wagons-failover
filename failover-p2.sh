@@ -13,6 +13,7 @@ if [ ! -v ${RULE_NUMBER:-} ]
 then
   printf "Masquerade is already on. Please disable it and rerun because the script switches it.\n"
 #  exit 1
+  iptables -t nat -D POSTROUTING $RULE_NUMBER
 fi
 
 # Set defaults if not provided by environment
@@ -42,6 +43,28 @@ gateway_if() {
   [[ "$1" = "$(ip r g "$CHECK_IP" | sed -rn 's/^.*dev ([^ ]*).*$/\1/p')" ]]
 }
 
+search_harting() {
+  read
+  (nmap -sn "$SECONDARY_NET" --exclude "$SECONDARY_IP" -oG - | grep "Status: Up" | sed -rn 's/Host: ([^ ]*) \(.*/\1/p') | while read -r line
+  do
+    read
+    # в переменной line у нас перебираются возможные гейтвеи.
+    # Если хоть один сработал, будем использовать его
+    echo $line
+    # надо проверить, есть ли в нём интернет
+    ip r d default
+    ip r a default via $line dev "$SECONDARY_IF"
+    if ping -c1 -I "$SECONDARY_IF" "$CHECK_IP" &>/dev/null
+    then
+      # works, switch to this
+      echo "nameserver $line" > /etc/resolv.conf 
+      RULE_NUMBER=$(iptables -t nat -L --line-numbers | grep -m1 MASQUERADE | sed -rn 's/([0-9]*).*MASQUERADE.*/\1/p')
+      iptables -t nat -D POSTROUTING $RULE_NUMBER
+      iptables -t nat -A POSTROUTING -o "$SECONDARY_IF" -j MASQUERADE
+    fi
+  done
+}
+
 read
 # Cycle healthcheck continuously with specified delay
 while sleep "$CHECK_DELAY"
@@ -52,51 +75,43 @@ while sleep "$CHECK_DELAY"
 
 do
   PRIMARY_IP=$(ip address show dev "$PRIMARY_IF" | grep -m1 inet | sed -rn 's/.*inet ([^ ]*)\/.*$/\1/p')
-  # if the primary interface is up
-  if [ -v ${PRIMARY_IP:-} ]
+  echo 0
+  # If healthcheck succeeds from primary interface
+  if ping -I "$PRIMARY_IF" -c1 "$CHECK_IP" &>/dev/null
   then
-    # primary interface is down
-    printf "sdss"
-  else
-    # адрес на модеме не пустой
-    if ping -I "$PRIMARY_IF" -c1 "$CHECK_IP" &>/dev/null
-    # If healthcheck succeeds from primary interface
+    echo 1
+    # Are we using any of the backups?
+    if (gateway_if "$SECONDARY_IF") || (gateway_if "$TERTIARY_IF")
+    then # Switch to primary
+      ip r d default
+      ip r a default via "$PRIMARY_GW" dev "$PRIMARY_IF"
+      RULE_NUMBER=$(iptables -t nat -L --line-numbers | grep -m1 MASQUERADE | sed -rn 's/([0-9]*).*MASQUERADE.*/\1/p')
+      iptables -t nat -D POSTROUTING "$RULE_NUMBER"
+      iptables -t nat -A POSTROUTING -o "$PRIMARY_IF" -j MASQUERADE
+      echo "nameserver $PRIMARY_IP" > /etc/resolv.conf 
+      read # delete!!!!!!!!!!!!!!!!!!!!!!!!
+    fi
+  else # гугл недоступен по основному интерфейсу
+    echo 2
+    # Are we using the primary?
+    if gateway_if "$PRIMARY_IF"
+    then # Switch to backup
+      echo calling hartings
+    elif gateway_if "$SECONDARY_IF"
     then
-      # Are we using any of the backups?
-      if (gateway_if "$SECONDARY_IF") || (gateway_if "$TERTIARY_IF")
-      then # Switch to primary
-        echo ip r d default
-        echo ip r a default via "$PRIMARY_GW" dev "$PRIMARY_IF"
-        RULE_NUMBER=$(iptables -t nat -L --line-numbers | grep -m1 MASQUERADE | sed -rn 's/([0-9]*).*MASQUERADE.*/\1/p')
-        echo iptables -t nat -D POSTROUTING "$RULE_NUMBER"
-        echo iptables -t nat -A POSTROUTING -o "$PRIMARY_IF" -j MASQUERADE
-        # TODO: share my internet
-read
-      fi
-    else # гугл недоступен по основному интерфейсу
-      # Are we using the primary?
-      if gateway_if "$PRIMARY_IF"
-      then # Switch to backup
-        (nmap -sn "$SECONDARY_NET" --exclude "$SECONDARY_IP" -oG - | grep "Status: Up" | sed -rn 's/Host: ([^ ]*) \(.*/\1/p') | while read -r line
-        do
-          # в переменной у нас перебираются возможные гейтвеи. Если хоть один сработал, будем использовать его
-          echo $line
-          # надо проверить, есть ли в нём интернет
-          echo ip r d "$SECONDARY_NET"
-          echo ip r a $line dev "$SECONDARY_IF"
-          if ping -c1 -I "$SECONDARY_IF" "$CHECK_IP" &>/dev/null
-          then
-            # works, switch to this
-            echo ip r d default
-            echo ip r a default via "$line" dev "$SECONDARY_IF"
-                 # и раздать через адсл
-          fi
-        done
-  
-        echo ip r d default
-        # у нас неизвестен гейтвей на третьем
-        echo ip r a default via "$SECONDARY_GW" dev "$SECONDARY_IF"
-      fi
+      echo sdfsdf
+    elif gateway_if "$TERTIARY_IF"
+    then
+      echo sdfsdf2
+    elif gateway_if ""
+    then
+      # у нас нет никакого гейтвея. обычно это происходит если модем не поднял dhcp
+      # ну или мы вручную удалили маршрут по умолчанию
+      # наш скрипт удаляет дефолты бесследно
+      # раз мы попали сюда, значит инета в 3ж-модеме уже нет.
+      # в этом случае нам нужно искать интернеты в хартингах
+      echo sdfsdf3
+      search_harting      
     fi
   fi
 done

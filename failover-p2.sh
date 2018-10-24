@@ -51,7 +51,7 @@ gateway_if() {
 }
 
 search_if2() {
-  STATUS=0
+#  STATUS=0
   (nmap -sn "$SECONDARY_NET" -T5 --exclude "$SECONDARY_IP" -oG - | grep "Status: Up" | sed -rn 's/Host: ([^ ]*) \(.*/\1/p') | while read -r line
   do
       # в переменной line у нас перебираются возможные гейтвеи.
@@ -60,11 +60,11 @@ search_if2() {
 #      read
       # надо проверить, есть ли в нём интернет
       ip route add "$CHECK_IP" via "$line" dev "$SECONDARY_IF"
-      echo ping "$PING_PARAMETERS" "$CHECK_IP"
+#      echo ping "$PING_PARAMETERS" "$CHECK_IP"
       if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null	# it was -I "$SECONDARY_IF" 
       then
         ip route delete "$CHECK_IP"
-        echo "works, switch to this $line"
+#        echo "works, switch to this $line"
         ip route delete default
         ip route add default via $line dev "$SECONDARY_IF"
         echo "nameserver $line" > /etc/resolv.conf
@@ -73,7 +73,7 @@ search_if2() {
         iptables -t nat -D POSTROUTING $RULE_NUMBER
         iptables -t nat -A POSTROUTING -o "$SECONDARY_IF" -j MASQUERADE
 #      return 1  # TODO!! DOES NOT RETURN!
-      STATUS=1
+#      STATUS=1
 #      echo break do
       break
 #      echo after break do
@@ -81,11 +81,11 @@ search_if2() {
     ip route delete "$CHECK_IP"
   done
 #  echo end cycle, none found
-  return "$STATUS"
+#  return "$STATUS"
 }
 
 search_if3() {
-  STATUS=0
+#  STATUS=0
   (nmap -sn "$TERTIARY_NET" -T5 --exclude "$TERTIARY_IP" -oG - | grep "Status: Up" | sed -rn 's/Host: ([^ ]*) \(.*/\1/p') | while read -r line
   do
     # в переменной line у нас перебираются возможные гейтвеи.
@@ -105,7 +105,7 @@ search_if3() {
       iptables -t nat -D POSTROUTING $RULE_NUMBER
       iptables -t nat -A POSTROUTING -o "$TERTIARY_IF" -j MASQUERADE
 #      return 1  # TODO!! DOES NOT RETURN!
-      STATUS=1
+#      STATUS=1
 #      echo break do
       break
 #      echo after break do
@@ -114,7 +114,7 @@ search_if3() {
 #    echo trap2
   done
 #  echo end cycle, none found2
-  return "$STATUS"
+#  return "$STATUS"
 }
 
 # Cycle healthcheck continuously with specified delay
@@ -148,17 +148,16 @@ do
     then # Switch to backup
       echo "we used primary, check secondary"
       read
-      if [[ "$(search_if2)" = "1" ]]
-#      search_if2
-#      if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+      search_if2
+      if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
       then
         #:
         echo "found secondary, switch ok 1"
       else
         echo "secondary failed, searching tertiary"
         read
-        if [[ "$(search_if3)" = "1" ]]
-#        if ping "$PING_PARAMETERS" -I "$TERTIARY_IF" "$CHECK_IP" &>/dev/null
+        search_if3
+        if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
         then
           #:
           echo "found tertiary, switch ok 1"
@@ -179,14 +178,14 @@ do
       else
         echo "secondary fails, search secondary again"
         read
-      if [[ "$(search_if2)" = "1" ]]
-#        if ping "$PING_PARAMETERS" -I "$TERTIARY_IF" "$CHECK_IP" &>/dev/null
+        search_if2
+        if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
         then
           #:
           echo "found secondary, switch ok 2"
         else
-	# search if3
-        if [[ "$(search_if3)" = "1" ]]
+	  search_if3
+          if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
           then
             #:
             echo "found tertiary, switch ok 3"
@@ -207,13 +206,14 @@ do
       else
         echo "tertiary fails, search it again"
         read
-        if [[ "$(search_if3)" = "1" ]]
-      then
+        search_if3
+        if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+        then
           #:
           echo "found tertiary, switch ok 2"
         else
-          if [[ "$(search_if2)" = "1" ]]
-#          if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+          search_if2
+          if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
           then
             #:
             echo "found secondary, switch ok 3"

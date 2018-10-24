@@ -1,6 +1,6 @@
 #!/bin/bash -x
 
-# v.10. TODO: rewrite using systemd
+# v.11. TODO: rewrite using systemd
 
 sleep 30 # cause otherwise iptables and all that is not loaded
 
@@ -71,7 +71,7 @@ search_if2() {
       # надо проверить, есть ли в нём интернет
       ip route add "$CHECK_IP" via "$line" dev "$SECONDARY_IF"
       _debug echo ping "$PING_PARAMETERS" "$CHECK_IP"
-      if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+      if ping "$PING_PARAMETERS" -I "$SECONDARY_IF" "$CHECK_IP" &>/dev/null
       then
         ip route delete "$CHECK_IP"
         _debug echo "works, switch to this $line"
@@ -99,7 +99,7 @@ search_if3() {
     waitread read
     # надо проверить, есть ли в нём интернет
     ip route add "$CHECK_IP" via "$line" dev "$TERTIARY_IF"
-    if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+    if ping "$PING_PARAMETERS" -I "$TERTIARY_IF" "$CHECK_IP" &>/dev/null
     then
       ip route delete "$CHECK_IP"
       # works, switch to this
@@ -124,9 +124,9 @@ while true # sleep "$CHECK_DELAY" is in the end of this script
 do
   _debug echo BEGIN
   waitread read
-  # If healthcheck succeeds from primary interface
   ip route add "$CHECK_IP" via "$PRIMARY_GW" dev "$PRIMARY_IF"
-  if ping "$PRIMARY_PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+  # If healthcheck succeeds from primary interface
+  if ping "$PRIMARY_PING_PARAMETERS" -I "$PRIMARY_IF" "$CHECK_IP" &>/dev/null
   then
     ip route delete "$CHECK_IP"
     _debug echo "healthcheck succeeds from primary interface"
@@ -153,14 +153,14 @@ do
       _debug echo "we used primary, check secondary"
       waitread read
       search_if2
-      if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+      if ping "$PING_PARAMETERS" -I "$SECONDARY_IF" "$CHECK_IP" &>/dev/null
       then
         _debug echo "found secondary, switch ok 1"
       else
         _debug echo "secondary failed, searching tertiary"
         waitread read
         search_if3
-        if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+        if ping "$PING_PARAMETERS" -I "$TERTIARY_IF" "$CHECK_IP" &>/dev/null
         then
           _debug echo "found tertiary, switch ok 1"
         else
@@ -172,19 +172,19 @@ do
       _debug echo "we used secondary, check it"
       # first check if secondary if works. if no, we will switch to tertiary
       # but we have to search secondary again TODO
-      if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+      if ping "$PING_PARAMETERS" -I "$SECONDARY_IF" "$CHECK_IP" &>/dev/null
       then
         _debug echo "secondary works, stay on it"
       else
         _debug echo "secondary fails, search secondary again"
         waitread read
         search_if2
-        if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+        if ping "$PING_PARAMETERS" -I "$SECONDARY_IF" "$CHECK_IP" &>/dev/null
         then
           _debug echo "found secondary, switch ok 2"
         else
 	  search_if3
-          if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+          if ping "$PING_PARAMETERS" -I "$TERTIARY_IF" "$CHECK_IP" &>/dev/null
           then
             _debug echo "found tertiary, switch ok 3"
           else
@@ -196,19 +196,19 @@ do
     then
       _debug echo "we used tertiary, check it"
       # first check if tertiary interface works. if no, we will switch to secondary
-      if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+      if ping "$PING_PARAMETERS" -I "$TERTIARY_IF" "$CHECK_IP" &>/dev/null
       then
         _debug echo "tertiary works, stay on it"
       else
         _debug echo "tertiary fails, search it again"
         waitread read
         search_if3
-        if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+        if ping "$PING_PARAMETERS" -I "$TERTIARY_IF" "$CHECK_IP" &>/dev/null
         then
           _debug echo "found tertiary, switch ok 2"
         else
           search_if2
-          if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
+          if ping "$PING_PARAMETERS" -I "$SECONDARY_IF" "$CHECK_IP" &>/dev/null
           then
             _debug echo "found secondary, switch ok 3"
           else
@@ -216,13 +216,31 @@ do
           fi
         fi
       fi
-
+    elif gateway_if ""
+    then
+      _debug echo "no interface at all, try if2 then if3"
+      waitread read
+      search_if2
+      if ping "$PING_PARAMETERS" -I "$SECONDARY_IF" "$CHECK_IP" &>/dev/null
+      then
+        _debug echo "found secondary, switch ok 2"
+      else
+        search_if3
+        if ping "$PING_PARAMETERS" -I "$TERTIARY_IF" "$CHECK_IP" &>/dev/null
+        then
+          _debug echo "found tertiary, switch ok 3"
+        else
+          _debug echo "complete failure3"
+        fi
+      fi
     else
-      # у нас нет никакого гейтвея. обычно это происходит если модем не поднял dhcp
+      # у нас нет никакого гейтвея, никакого default route
+      # возможно, это потому что не виден модем
       # ну или мы вручную удалили маршрут по умолчанию
       # или неправильные названия интерфейсов
       # тут какая-то херь
       echo "wtf"
+      search_if2
     fi
   fi
   sleep "$CHECK_DELAY"

@@ -1,4 +1,13 @@
-#!/bin/bash -x
+#!/bin/bash
+
+DEBUG="0"
+# Function to optionally handle executing included debug statements
+_debug()
+{
+    # I prefer using if/then for readability, but this is an unusual case
+#    [ "${DEBUG}" -ne "0" ] && $@
+    [ "${DEBUG}" -ne 0 ] && "$@" 
+}
 
 # setup main firewall rules
 #iptables -t filter -A INPUT -i lo -j ACCEPT
@@ -13,17 +22,16 @@
 RULE_NUMBER=$(iptables -t nat -L --line-numbers | grep -m1 MASQUERADE | sed -rn 's/([0-9]*).*MASQUERADE.*/\1/p')
 if [ ! -v ${RULE_NUMBER:-} ]
 then
-  printf "Masquerade is already on. Please disable it and rerun because the script switches it.\n"
-#  exit 1
-  iptables -t nat -D POSTROUTING $RULE_NUMBER
+  printf "Masquerade is already on. Please disable it and rerun because the script switches it:\niptables -t nat -D POSTROUTING $RULE_NUMBER\n"
+  _debug iptables -t nat -D POSTROUTING $RULE_NUMBER
+  exit 1
 fi
 
 # Set defaults if not provided by environment
 CHECK_DELAY=${CHECK_DELAY:-5}
 CHECK_IP=${CHECK_IP:-8.8.8.8}
 
-STATUS=0
-PING_PARAMETERS=${PING_PARAMETERS:-"-w 1 -c1"}
+PING_PARAMETERS=${PING_PARAMETERS:-"-w 2 -c1"}
 
 # Первый — 3G/LTE модем.
 PRIMARY_IF=${PRIMARY_IF:-enp3s6}
@@ -51,20 +59,19 @@ gateway_if() {
 }
 
 search_if2() {
-#  STATUS=0
   (nmap -sn "$SECONDARY_NET" -T5 --exclude "$SECONDARY_IP" -oG - | grep "Status: Up" | sed -rn 's/Host: ([^ ]*) \(.*/\1/p') | while read -r line
   do
       # в переменной line у нас перебираются возможные гейтвеи.
       # Если хоть один сработал, будем использовать его
-#      echo $line
-#      read
+_debug      echo $line
+_debug      read
       # надо проверить, есть ли в нём интернет
       ip route add "$CHECK_IP" via "$line" dev "$SECONDARY_IF"
-#      echo ping "$PING_PARAMETERS" "$CHECK_IP"
+_debug      echo ping "$PING_PARAMETERS" "$CHECK_IP"
       if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null	# it was -I "$SECONDARY_IF" 
       then
         ip route delete "$CHECK_IP"
-#        echo "works, switch to this $line"
+_debug        echo "works, switch to this $line"
         ip route delete default
         ip route add default via $line dev "$SECONDARY_IF"
         echo "nameserver $line" > /etc/resolv.conf
@@ -72,25 +79,21 @@ search_if2() {
         RULE_NUMBER=$(iptables -t nat -L --line-numbers | grep -m1 MASQUERADE | sed -rn 's/([0-9]*).*MASQUERADE.*/\1/p')
         iptables -t nat -D POSTROUTING $RULE_NUMBER
         iptables -t nat -A POSTROUTING -o "$SECONDARY_IF" -j MASQUERADE
-#      return 1  # TODO!! DOES NOT RETURN!
-#      STATUS=1
-#      echo break do
+_debug      echo break do
       break
-#      echo after break do
     fi
     ip route delete "$CHECK_IP"
   done
-#  echo end cycle, none found
-#  return "$STATUS"
+_debug  echo end cycle, none found 1
 }
 
 search_if3() {
-#  STATUS=0
   (nmap -sn "$TERTIARY_NET" -T5 --exclude "$TERTIARY_IP" -oG - | grep "Status: Up" | sed -rn 's/Host: ([^ ]*) \(.*/\1/p') | while read -r line
   do
     # в переменной line у нас перебираются возможные гейтвеи.
     # Если хоть один сработал, будем использовать его
-#    echo $line
+_debug    echo $line
+_debug    read
     # надо проверить, есть ли в нём интернет
     ip route add "$CHECK_IP" via "$line" dev "$TERTIARY_IF"
     if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
@@ -104,35 +107,30 @@ search_if3() {
       RULE_NUMBER=$(iptables -t nat -L --line-numbers | grep -m1 MASQUERADE | sed -rn 's/([0-9]*).*MASQUERADE.*/\1/p')
       iptables -t nat -D POSTROUTING $RULE_NUMBER
       iptables -t nat -A POSTROUTING -o "$TERTIARY_IF" -j MASQUERADE
-#      return 1  # TODO!! DOES NOT RETURN!
-#      STATUS=1
-#      echo break do
+_debug      echo break do
       break
-#      echo after break do
     fi
     ip route delete "$CHECK_IP"
-#    echo trap2
   done
-#  echo end cycle, none found2
-#  return "$STATUS"
+_debug  echo end cycle, none found2
 }
 
 # Cycle healthcheck continuously with specified delay
 # while true
 while sleep "$CHECK_DELAY"
 do
-#  echo BEGIN
-  read
+_debug  echo BEGIN
+  _debug read
   # If healthcheck succeeds from primary interface
   ip route add "$CHECK_IP" via "$PRIMARY_GW" dev "$PRIMARY_IF"
   if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
   then
     ip route delete "$CHECK_IP"
-    echo "healthcheck succeeds from primary interface"
+    _debug echo "healthcheck succeeds from primary interface"
     # Are we using any of the backups?
     if (! gateway_if "$PRIMARY_IF")
     then # Switch to primary
-      echo "main interface is up, switch to it"
+      _debug echo "main interface is up, switch to it"
       ip route delete default
       ip route add default via "$PRIMARY_GW" dev "$PRIMARY_IF"
       RULE_NUMBER=$(iptables -t nat -L --line-numbers | grep -m1 MASQUERADE | sed -rn 's/([0-9]*).*MASQUERADE.*/\1/p')
@@ -142,83 +140,85 @@ do
     fi
   else # гугл недоступен по основному интерфейсу
     ip route delete "$CHECK_IP"
-    echo "healthcheck fails from primary interface"
+    _debug echo "healthcheck fails from primary interface"
     # Are we using the primary?
     if gateway_if "$PRIMARY_IF"
     then # Switch to backup
-      echo "we used primary, check secondary"
-      read
+      _debug echo "we used primary, check secondary"
+      _debug read
       search_if2
       if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
       then
-        #:
-        echo "found secondary, switch ok 1"
+        :
+        _debug echo "found secondary, switch ok 1"
       else
-        echo "secondary failed, searching tertiary"
-        read
+        _debug echo "secondary failed, searching tertiary"
+        _debug read
         search_if3
         if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
         then
-          #:
-          echo "found tertiary, switch ok 1"
+          :
+          _debug echo "found tertiary, switch ok 1"
         else
-          #:
-          echo "complete failure2"
+          :
+          _debug echo "complete failure2"
         fi
       fi
     elif gateway_if "$SECONDARY_IF"
     then
-      echo "we used secondary, check it"
+      _debug echo "we used secondary, check it"
       # first check if secondary if has internet. if no, we will switch to tertiary
       # but we have to search secondary again TODO
       if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
       then
-        echo "secondary works, stay on it"
-        #:
+        _debug echo "secondary works, stay on it"
+        :
       else
-        echo "secondary fails, search secondary again"
-        read
+        _debug echo "secondary fails, search secondary again"
+        _debug read
         search_if2
         if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
         then
-          #:
-          echo "found secondary, switch ok 2"
+          :
+          _debug echo "found secondary, switch ok 2"
         else
 	  search_if3
           if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
           then
-            #:
-            echo "found tertiary, switch ok 3"
+            :
+            _debug echo "found tertiary, switch ok 3"
           else
-            echo "complete failure3"
+            :
+            _debug echo "complete failure3"
           fi
         fi
       fi
     elif gateway_if "$TERTIARY_IF"
     then
       #:
-      echo "we used tertiary"
+      _debug echo "we used tertiary"
       # first check if tertiary interface has internet. if no, we will switch to secondary
       if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
       then
-        echo "tertiary works, stay on it"
-        #:
+        _debug echo "tertiary works, stay on it"
+        :
       else
-        echo "tertiary fails, search it again"
-        read
+        _debug echo "tertiary fails, search it again"
+        _debug read
         search_if3
         if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
         then
-          #:
-          echo "found tertiary, switch ok 2"
+          :
+          _debug echo "found tertiary, switch ok 2"
         else
           search_if2
           if ping "$PING_PARAMETERS" "$CHECK_IP" &>/dev/null
           then
-            #:
-            echo "found secondary, switch ok 3"
+            :
+            _debug echo "found secondary, switch ok 3"
           else
-            echo "complete failure4"
+            :
+            _debug echo "complete failure4"
           fi
         fi
       fi

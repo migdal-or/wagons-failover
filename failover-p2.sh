@@ -1,6 +1,6 @@
 #!/bin/bash -x
 
-# v.11. TODO: rewrite using systemd
+# v.13. TODO: rewrite using systemd
 
 sleep 30 # cause otherwise iptables and all that is not loaded
 
@@ -119,6 +119,8 @@ search_if3() {
 _debug echo end cycle, none found2
 }
 
+echo "nameserver $PRIMARY_GW" > /etc/resolv.conf
+
 # Cycle healthcheck continuously with specified delay
 while true # sleep "$CHECK_DELAY" is in the end of this script
 do
@@ -131,7 +133,6 @@ do
     # switch to it immediately
     ip route delete "$CHECK_IP"
     _debug echo "healthcheck succeeds from primary interface"
-    echo "nameserver $PRIMARY_GW" > /etc/resolv.conf
     # Are we using any of the backups?
     if (! gateway_if "$PRIMARY_IF")
     then # Switch to primary
@@ -142,6 +143,7 @@ do
       RULE_NUMBER=$(iptables -t nat -L --line-numbers | grep -m1 MASQUERADE | sed -rn 's/([0-9]*).*MASQUERADE.*/\1/p')
       iptables -t nat -D POSTROUTING "$RULE_NUMBER"
       iptables -t nat -A POSTROUTING -o "$PRIMARY_IF" -j MASQUERADE
+      echo "nameserver $PRIMARY_GW" > /etc/resolv.conf
     else
       _debug echo "we were on primary, stay on it"
     fi

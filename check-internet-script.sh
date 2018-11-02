@@ -1,6 +1,6 @@
 #!/bin/bash
 
-printf "this is the internet checkup script on 765/630"
+printf "this is the internet checkup script on 630"
 
 while true
 do
